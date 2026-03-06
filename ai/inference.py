@@ -1,77 +1,51 @@
-# Simple code for inference by enumeration in a Bayesian network - Lecture 2
-# Manual calculation approach (works without library dependencies)
+from pgmpy.models import DiscreteBayesianNetwork as BayesianNetwork
+from pgmpy.factors.discrete import TabularCPD
+import logging
 
-# Define probability tables (nodes)
-probability_tables = {
-    "Rain": {
-        "none": 0.7,
-        "light": 0.2,
-        "heavy": 0.1
-    },
-    "Maintenance | Rain": {
-        ("none", "yes"): 0.4,
-        ("none", "no"): 0.6,
-        ("light", "yes"): 0.2,
-        ("light", "no"): 0.8,
-        ("heavy", "yes"): 0.1,
-        ("heavy", "no"): 0.9
-    },
-    "Train | Rain, Maintenance": {
-        ("none", "yes", "on time"): 0.8,
-        ("none", "yes", "delayed"): 0.2,
-        ("none", "no", "on time"): 0.9,
-        ("none", "no", "delayed"): 0.1,
-        ("light", "yes", "on time"): 0.6,
-        ("light", "yes", "delayed"): 0.4,
-        ("light", "no", "on time"): 0.7,
-        ("light", "no", "delayed"): 0.3,
-        ("heavy", "yes", "on time"): 0.4,
-        ("heavy", "yes", "delayed"): 0.6,
-        ("heavy", "no", "on time"): 0.5,
-        ("heavy", "no", "delayed"): 0.5
-    },
-    "Appointment | Train": {
-        ("on time", "attend"): 0.9,
-        ("on time", "miss"): 0.1,
-        ("delayed", "attend"): 0.6,
-        ("delayed", "miss"): 0.4
-    }
-}
+# Suppress pgmpy info/warning messages
+logging.getLogger('pgmpy').setLevel(logging.ERROR)
+# Define structure
+model = BayesianNetwork([
+    ('rain', 'maintenance'),
+    ('rain', 'train'),
+    ('maintenance', 'train'),
+    ('train', 'appointment')
+])
 
-def calculate_joint_probability(rain, maintenance, train, appointment):
-    """
-    Calculate joint probability P(rain, maintenance, train, appointment)
-    using the probability tables defined above.
-    
-    Bayesian Network structure:
-    Rain -> Maintenance
-    Rain -> Train
-    Maintenance -> Train
-    Train -> Appointment
-    """
-    
- 
-    p_rain = probability_tables["Rain"][rain]
-    
-    p_maintenance_given_rain = probability_tables["Maintenance | Rain"][(rain, maintenance)]
-    
-    p_train_given_rain_maintenance = probability_tables["Train | Rain, Maintenance"][(rain, maintenance, train)]
+# Rain CPD
+cpd_rain = TabularCPD('rain', 3, [[0.7], [0.2], [0.1]],
+                      state_names={'rain': ['none', 'light', 'heavy']})
 
-    p_appointment_given_train = probability_tables["Appointment | Train"][(train, appointment)]
+# Maintenance | Rain
+cpd_maint = TabularCPD('maintenance', 2, 
+                       [[0.4, 0.2, 0.1],
+                        [0.6, 0.8, 0.9]],
+                       evidence=['rain'], evidence_card=[3],
+                       state_names={'maintenance': ['yes', 'no'],
+                                   'rain': ['none', 'light', 'heavy']})
 
-    return p_rain * p_maintenance_given_rain * p_train_given_rain_maintenance * p_appointment_given_train
-    
+# Train | Rain, Maintenance
+cpd_train = TabularCPD('train', 2,
+                       [[0.8, 0.9, 0.6, 0.7, 0.4, 0.5],
+                        [0.2, 0.1, 0.4, 0.3, 0.6, 0.5]],
+                       evidence=['rain', 'maintenance'], evidence_card=[3, 2],
+                       state_names={'train': ['on time', 'delayed'],
+                                   'rain': ['none', 'light', 'heavy'],
+                                   'maintenance': ['yes', 'no']})
 
-# Calculate the probability
-probability = calculate_joint_probability("heavy", "no", "delayed", "attend")
+# Appointment | Train  
+cpd_appt = TabularCPD('appointment', 2,
+                      [[0.9, 0.6],
+                       [0.1, 0.4]],
+                      evidence=['train'], evidence_card=[2],
+                      state_names={'appointment': ['attend', 'miss'],
+                                  'train': ['on time', 'delayed']})
 
-print(f"Bayesian Network Inference")
-print(f"=" * 50)
-print(f"Query: P(Rain=heavy, Maintenance=no, Train=delayed, Appointment=attend)")
-print(f"Result: {probability:.6f}")
-print(f"\nCalculation:")
-print(f"  P(Rain=heavy) = {probability_tables['Rain']['heavy']}")
-print(f"  P(Maintenance=no | Rain=heavy) = {probability_tables['Maintenance | Rain'][('heavy', 'no')]}")
-print(f"  P(Train=delayed | Rain=heavy, Maintenance=no) = {probability_tables['Train | Rain, Maintenance'][('heavy', 'no', 'delayed')]}")
-print(f"  P(Appointment=attend | Train=delayed) = {probability_tables['Appointment | Train'][('delayed', 'attend')]}")
-print(f"  Joint Probability = {probability_tables['Rain']['heavy']} × {probability_tables['Maintenance | Rain'][('heavy', 'no')]} × {probability_tables['Train | Rain, Maintenance'][('heavy', 'no', 'delayed')]} × {probability_tables['Appointment | Train'][('delayed', 'attend')]} = {probability:.6f}")
+model.add_cpds(cpd_rain, cpd_maint, cpd_train, cpd_appt)
+model.check_model()
+
+# Query
+from pgmpy.inference import VariableElimination
+infer = VariableElimination(model)
+result = infer.query(['appointment'], evidence={'rain': 'heavy', 'maintenance': 'no', 'train': 'delayed'})
+print(result)
